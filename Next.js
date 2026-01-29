@@ -1,139 +1,134 @@
-import { useState } from "react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Roblox Group Ban Checker</title>
+  <style>
+    * { box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; }
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #ffffff;
+      height: 100vh;
+      display: flex;
+    }
+    .left, .right {
+      width: 50%;
+      padding: 40px;
+    }
+    .left {
+      border-right: 1px solid #222;
+    }
+    h1, h2 {
+      margin-top: 0;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      background: #111;
+      border: 1px solid #333;
+      color: #fff;
+      border-radius: 6px;
+    }
+    button {
+      margin-top: 15px;
+      padding: 12px 20px;
+      background: #c0392b;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover { background: #e74c3c; }
+    .error { color: #ff6b6b; margin-top: 15px; }
+    .result-box {
+      border-radius: 8px;
+      padding: 25px;
+      border: 2px solid;
+    }
+    .banned {
+      border-color: #ff4d4d;
+      background: rgba(255, 77, 77, 0.1);
+    }
+    .clean {
+      border-color: #2ecc71;
+      background: rgba(46, 204, 113, 0.1);
+    }
+    ul { margin-top: 15px; }
+    .muted { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div class="left">
+    <h1>Roblox Exploit Group Checker</h1>
+    <p class="muted">Paste a Roblox profile link to check if the user is in any banned groups.</p>
 
+    <input id="profileInput" placeholder="https://www.roblox.com/users/USERID/profile" />
+    <button onclick="runCheck()">Check User</button>
+
+    <div id="error" class="error"></div>
+  </div>
+
+  <div class="right">
+    <h2>Result</h2>
+    <div id="result" class="muted">Awaiting scan...</div>
+  </div>
+
+<script>
 // ================= CONFIG =================
-// Replace these with REAL Roblox group IDs you want to ban
 const BANNED_GROUP_IDS = [
-  34057857,
-  16040283,
   4219097,
+  34057857,
+  34640145
 ];
-
 // =========================================
 
-export default function RobloxGroupBanChecker() {
-  const [profileLink, setProfileLink] = useState("");
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const extractUserId = (url) => {
-    try {
-      const match = url.match(/users\/(\d+)/);
-      return match ? match[1] : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const checkGroups = async () => {
-    setError(null);
-    setStatus(null);
-
-    const userId = extractUserId(profileLink);
-    if (!userId) {
-      setError("Invalid Roblox profile URL.");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const response = await fetch(
-        `https://groups.roblox.com/v2/users/${userId}/groups/roles`
-      );
-
-      if (!response.ok) throw new Error("Failed to fetch user groups");
-
-      const data = await response.json();
-      const userGroupIds = data.data.map((g) => g.group.id);
-
-      const matchedGroups = userGroupIds.filter((id) =>
-        BANNED_GROUP_IDS.includes(id)
-      );
-
-      setStatus({
-        banned: matchedGroups.length > 0,
-        matchedGroups,
-      });
-    } catch (err) {
-      setError("Error checking groups. Roblox API may be rate-limiting.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-neutral-950 text-white flex">
-      {/* LEFT SIDE */}
-      <div className="w-1/2 p-10 border-r border-neutral-800">
-        <h1 className="text-3xl font-bold mb-6">Roblox Exploit Group Checker</h1>
-        <p className="text-neutral-400 mb-4">
-          Paste a Roblox profile link below to verify whether the user has joined
-          any banned groups.
-        </p>
-
-        <input
-          type="text"
-          placeholder="https://www.roblox.com/users/USERID/profile"
-          className="w-full p-3 rounded bg-neutral-900 border border-neutral-700 focus:outline-none"
-          value={profileLink}
-          onChange={(e) => setProfileLink(e.target.value)}
-        />
-
-        <button
-          onClick={checkGroups}
-          disabled={loading}
-          className="mt-4 px-6 py-3 bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
-        >
-          {loading ? "Checking…" : "Run Check"}
-        </button>
-
-        {error && <p className="text-red-400 mt-4">{error}</p>}
-      </div>
-
-      {/* RIGHT SIDE */}
-      <div className="w-1/2 p-10">
-        <h2 className="text-2xl font-semibold mb-6">Result</h2>
-
-        {!status && !loading && (
-          <p className="text-neutral-500">Awaiting scan...</p>
-        )}
-
-        {status && (
-          <div
-            className={`p-6 rounded border ${
-              status.banned
-                ? "border-red-500 bg-red-500/10"
-                : "border-green-500 bg-green-500/10"
-            }`}
-          >
-            {status.banned ? (
-              <>
-                <h3 className="text-red-400 text-xl font-bold mb-2">
-                  ❌ BANNED USER
-                </h3>
-                <p className="text-neutral-300">
-                  This user is a member of one or more banned groups.
-                </p>
-                <ul className="mt-3 list-disc list-inside text-neutral-400">
-                  {status.matchedGroups.map((id) => (
-                    <li key={id}>Group ID: {id}</li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <>
-                <h3 className="text-green-400 text-xl font-bold mb-2">
-                  ✅ CLEAN USER
-                </h3>
-                <p className="text-neutral-300">
-                  No banned group affiliations detected.
-                </p>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function extractUserId(url) {
+  const match = url.match(/users\/(\d+)/);
+  return match ? match[1] : null;
 }
+
+async function runCheck() {
+  const input = document.getElementById('profileInput').value.trim();
+  const errorDiv = document.getElementById('error');
+  const resultDiv = document.getElementById('result');
+
+  errorDiv.textContent = '';
+  resultDiv.className = '';
+  resultDiv.textContent = 'Scanning user groups...';
+
+  const userId = extractUserId(input);
+  if (!userId) {
+    errorDiv.textContent = 'Invalid Roblox profile URL.';
+    resultDiv.textContent = 'Scan failed.';
+    return;
+  }
+
+  try {
+    const res = await fetch(`https://groups.roblox.com/v2/users/${userId}/groups/roles`);
+    if (!res.ok) throw new Error('API Error');
+
+    const data = await res.json();
+    const userGroups = data.data.map(g => g.group.id);
+    const matches = userGroups.filter(id => BANNED_GROUP_IDS.includes(id));
+
+    if (matches.length > 0) {
+      resultDiv.className = 'result-box banned';
+      resultDiv.innerHTML = `<h3>❌ BANNED USER</h3>
+        <p>User is a member of banned groups:</p>
+        <ul>${matches.map(id => `<li>Group ID: ${id}</li>`).join('')}</ul>`;
+    } else {
+      resultDiv.className = 'result-box clean';
+      resultDiv.innerHTML = `<h3>✅ CLEAN USER</h3><p>No banned group affiliations detected.</p>`;
+    }
+  } catch (err) {
+    errorDiv.textContent = 'Failed to fetch group data. Roblox API may be blocking requests.';
+    resultDiv.textContent = 'Scan error.';
+  }
+}
+</script>
+</body>
+</html>
