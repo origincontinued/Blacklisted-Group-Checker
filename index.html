@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Roblox Group Checker</title>
+  <title>Advanced Roblox Group Checker</title>
 
   <style>
     * {
@@ -11,7 +11,7 @@
     }
 
     body {
-      background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
+      background: radial-gradient(circle at top, #1b1b1b, #0b0b0b);
       color: #fff;
       min-height: 100vh;
       display: flex;
@@ -20,53 +20,55 @@
     }
 
     .card {
-      background: #141414;
+      background: #121212;
       padding: 30px;
-      border-radius: 14px;
-      width: 360px;
-      box-shadow: 0 20px 40px rgba(0,0,0,.5);
+      border-radius: 16px;
+      width: 420px;
+      box-shadow: 0 25px 60px rgba(0,0,0,.6);
     }
 
     h1 {
       text-align: center;
-      margin-bottom: 20px;
       font-size: 22px;
+      margin-bottom: 20px;
     }
 
     input, button {
       width: 100%;
       padding: 12px;
       margin-top: 10px;
-      border-radius: 8px;
+      border-radius: 10px;
       border: none;
       font-size: 15px;
     }
 
     input {
-      background: #1f1f1f;
+      background: #1e1e1e;
       color: #fff;
     }
 
     button {
-      background: #5865f2;
+      background: linear-gradient(135deg, #5865f2, #4752c4);
       color: white;
       cursor: pointer;
       font-weight: 600;
     }
 
     button:hover {
-      opacity: 0.9;
+      filter: brightness(1.1);
     }
 
     .result {
       margin-top: 15px;
+      min-height: 22px;
       text-align: center;
-      min-height: 20px;
+      font-size: 15px;
     }
 
     .success { color: #4ade80; }
     .error { color: #f87171; }
     .loading { color: #facc15; }
+    .small { font-size: 13px; opacity: 0.8; margin-top: 5px; }
   </style>
 </head>
 
@@ -76,85 +78,116 @@
     <h1>Roblox Group Checker</h1>
 
     <input id="userInput" placeholder="Username or User ID">
-    <input id="groupId" placeholder="Group ID">
+    <input id="groupIds" placeholder="Group IDs (comma separated)">
+    <input id="minRank" placeholder="Minimum Rank ID (optional)">
 
-    <button onclick="handleCheck()">Check Group</button>
+    <button onclick="handleCheck()">Check</button>
 
     <div id="result" class="result"></div>
+    <div id="meta" class="result small"></div>
   </div>
 
   <script>
     // ================================
-    // REUSABLE FUNCTION
+    // REUSABLE CORE MODULE
     // ================================
-    async function checkRobloxGroup(userInput, groupId) {
-      let userId = userInput
 
-      // If not numeric, treat as username
-      if (!/^\d+$/.test(userInput)) {
-        const userRes = await fetch(
-          "https://users.roproxy.com/v1/usernames/users",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              usernames: [userInput],
-              excludeBannedUsers: false
-            })
-          }
-        )
+    async function resolveUserId(input) {
+      if (/^\d+$/.test(input)) return input
 
-        const userData = await userRes.json()
-        if (!userData.data.length) throw new Error("User not found")
+      const cacheKey = `rbx_uid_${input.toLowerCase()}`
+      const cached = localStorage.getItem(cacheKey)
+      if (cached) return cached
 
-        userId = userData.data[0].id
-      }
+      const res = await fetch("https://users.roproxy.com/v1/usernames/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usernames: [input],
+          excludeBannedUsers: false
+        })
+      })
 
-      const groupRes = await fetch(
+      const data = await res.json()
+      if (!data.data.length) throw new Error("User not found")
+
+      localStorage.setItem(cacheKey, data.data[0].id)
+      return data.data[0].id
+    }
+
+    async function checkRobloxGroups({ userInput, groupIds, minRank = 0 }) {
+      const userId = await resolveUserId(userInput)
+
+      const res = await fetch(
         `https://groups.roproxy.com/v2/users/${userId}/groups/roles`
       )
 
-      const groupData = await groupRes.json()
+      const data = await res.json()
 
-      const group = groupData.data.find(g => g.group.id == groupId)
+      const results = groupIds.map(id => {
+        const g = data.data.find(grp => grp.group.id == id)
+        if (!g) return { groupId: id, inGroup: false }
 
-      return {
-        inGroup: !!group,
-        role: group?.role?.name || null,
-        userId
-      }
+        return {
+          groupId: id,
+          inGroup: g.role.rank >= minRank,
+          role: g.role.name,
+          rank: g.role.rank
+        }
+      })
+
+      return { userId, results }
     }
 
     // ================================
     // UI HANDLER
     // ================================
+
     async function handleCheck() {
       const userInput = document.getElementById("userInput").value.trim()
-      const groupId = document.getElementById("groupId").value.trim()
-      const result = document.getElementById("result")
+      const groupIds = document.getElementById("groupIds").value
+        .split(",")
+        .map(g => g.trim())
+        .filter(Boolean)
 
-      if (!userInput || !groupId) {
-        result.textContent = "Please fill in all fields"
+      const minRank = Number(document.getElementById("minRank").value || 0)
+
+      const result = document.getElementById("result")
+      const meta = document.getElementById("meta")
+
+      if (!userInput || !groupIds.length) {
+        result.textContent = "Please fill in required fields"
         result.className = "result error"
+        meta.textContent = ""
         return
       }
 
       result.textContent = "Checking..."
       result.className = "result loading"
+      meta.textContent = ""
 
       try {
-        const res = await checkRobloxGroup(userInput, groupId)
+        const res = await checkRobloxGroups({ userInput, groupIds, minRank })
 
-        if (res.inGroup) {
-          result.textContent = `✅ In group — Role: ${res.role}`
+        const passed = res.results.filter(r => r.inGroup)
+        const failed = res.results.filter(r => !r.inGroup)
+
+        if (passed.length) {
+          result.textContent = `✅ Passed ${passed.length}/${groupIds.length} groups`
           result.className = "result success"
         } else {
-          result.textContent = "❌ Not in group"
+          result.textContent = "❌ No groups matched"
           result.className = "result error"
         }
+
+        meta.textContent = passed
+          .map(p => `Group ${p.groupId}: ${p.role} (Rank ${p.rank})`)
+          .join(" • ")
+
       } catch (err) {
-        result.textContent = "⚠️ User or group not found"
+        result.textContent = "⚠️ Failed to check user"
         result.className = "result error"
+        meta.textContent = ""
         console.error(err)
       }
     }
