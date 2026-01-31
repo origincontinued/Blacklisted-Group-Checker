@@ -3,62 +3,158 @@
 <head>
   <meta charset="UTF-8">
   <title>Roblox Group Checker</title>
+
   <style>
+    * {
+      box-sizing: border-box;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
     body {
-      font-family: Arial, sans-serif;
-      background: #111;
+      background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
       color: #fff;
+      min-height: 100vh;
       display: flex;
-      flex-direction: column;
+      justify-content: center;
       align-items: center;
-      padding-top: 50px;
     }
+
+    .card {
+      background: #141414;
+      padding: 30px;
+      border-radius: 14px;
+      width: 360px;
+      box-shadow: 0 20px 40px rgba(0,0,0,.5);
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+      font-size: 22px;
+    }
+
     input, button {
-      padding: 10px;
-      margin: 5px;
-      font-size: 16px;
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border-radius: 8px;
+      border: none;
+      font-size: 15px;
     }
+
+    input {
+      background: #1f1f1f;
+      color: #fff;
+    }
+
     button {
+      background: #5865f2;
+      color: white;
       cursor: pointer;
+      font-weight: 600;
     }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
+    .result {
+      margin-top: 15px;
+      text-align: center;
+      min-height: 20px;
+    }
+
+    .success { color: #4ade80; }
+    .error { color: #f87171; }
+    .loading { color: #facc15; }
   </style>
 </head>
+
 <body>
 
-  <h1>Roblox Group Checker</h1>
+  <div class="card">
+    <h1>Roblox Group Checker</h1>
 
-  <input id="userId" placeholder="Roblox User ID">
-  <input id="groupId" placeholder="Group ID">
+    <input id="userInput" placeholder="Username or User ID">
+    <input id="groupId" placeholder="Group ID">
 
-  <button onclick="checkGroup()">Check</button>
+    <button onclick="handleCheck()">Check Group</button>
 
-  <p id="result"></p>
+    <div id="result" class="result"></div>
+  </div>
 
   <script>
-    async function checkGroup() {
-      const userId = document.getElementById("userId").value.trim()
+    // ================================
+    // REUSABLE FUNCTION
+    // ================================
+    async function checkRobloxGroup(userInput, groupId) {
+      let userId = userInput
+
+      // If not numeric, treat as username
+      if (!/^\d+$/.test(userInput)) {
+        const userRes = await fetch(
+          "https://users.roproxy.com/v1/usernames/users",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              usernames: [userInput],
+              excludeBannedUsers: false
+            })
+          }
+        )
+
+        const userData = await userRes.json()
+        if (!userData.data.length) throw new Error("User not found")
+
+        userId = userData.data[0].id
+      }
+
+      const groupRes = await fetch(
+        `https://groups.roproxy.com/v2/users/${userId}/groups/roles`
+      )
+
+      const groupData = await groupRes.json()
+
+      const group = groupData.data.find(g => g.group.id == groupId)
+
+      return {
+        inGroup: !!group,
+        role: group?.role?.name || null,
+        userId
+      }
+    }
+
+    // ================================
+    // UI HANDLER
+    // ================================
+    async function handleCheck() {
+      const userInput = document.getElementById("userInput").value.trim()
       const groupId = document.getElementById("groupId").value.trim()
       const result = document.getElementById("result")
 
+      if (!userInput || !groupId) {
+        result.textContent = "Please fill in all fields"
+        result.className = "result error"
+        return
+      }
+
       result.textContent = "Checking..."
+      result.className = "result loading"
 
       try {
-        const res = await fetch(
-          `https://groups.roproxy.com/v2/users/${userId}/groups/roles`
-        )
+        const res = await checkRobloxGroup(userInput, groupId)
 
-        if (!res.ok) throw new Error("API error")
-
-        const data = await res.json()
-
-        const inGroup = data.data.some(g => g.group.id == groupId)
-
-        result.textContent = inGroup
-          ? "✅ User is in the group"
-          : "❌ User is NOT in the group"
-
+        if (res.inGroup) {
+          result.textContent = `✅ In group — Role: ${res.role}`
+          result.className = "result success"
+        } else {
+          result.textContent = "❌ Not in group"
+          result.className = "result error"
+        }
       } catch (err) {
-        result.textContent = "⚠️ Failed to check group"
+        result.textContent = "⚠️ User or group not found"
+        result.className = "result error"
         console.error(err)
       }
     }
