@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Roblox OSINT Dashboard</title>
+<title>Roblox Alt Analysis Dashboard</title>
 
 <style>
 * { box-sizing: border-box; font-family: system-ui, sans-serif; }
@@ -14,7 +14,7 @@ body {
   justify-content: center;
 }
 .container {
-  width: 900px;
+  width: 1000px;
   background: #121212;
   border-radius: 16px;
   padding: 25px;
@@ -24,17 +24,16 @@ input, button {
   padding: 10px;
   border-radius: 8px;
   border: none;
+  width: 100%;
 }
-input { background: #1e1e1e; color: white; width: 100%; }
+input { background: #1e1e1e; color: white; }
 button {
   background: #5865f2;
   color: white;
   font-weight: 600;
   cursor: pointer;
 }
-.section {
-  margin-top: 20px;
-}
+.section { margin-top: 20px; }
 .section h2 {
   cursor: pointer;
   font-size: 18px;
@@ -42,7 +41,7 @@ button {
 .hidden { display: none; }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 12px;
 }
 .card {
@@ -60,25 +59,22 @@ button {
 .filter {
   margin: 10px 0;
 }
-pre {
-  background: #1a1a1a;
-  padding: 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  overflow-x: auto;
+.score {
+  font-weight: bold;
 }
-a { color: #8ab4ff; text-decoration: none; }
-.loading { color: #facc15; }
+.low { color: #4ade80 }
+.mid { color: #facc15 }
+.high { color: #f87171 }
 </style>
 </head>
 
 <body>
 <div class="container">
 
-<h1>Roblox OSINT Dashboard</h1>
+<h1>Roblox Alt Analysis Dashboard</h1>
 
 <input id="userInput" placeholder="Username or User ID">
-<button onclick="inspect()">Inspect</button>
+<button onclick="inspect()">Analyze</button>
 
 <div id="status"></div>
 <div id="output"></div>
@@ -86,140 +82,145 @@ a { color: #8ab4ff; text-decoration: none; }
 </div>
 
 <script>
+const TARGET_GROUP = 4219097
+
 /* ================= HELPERS ================= */
 
-async function fetchJSON(url, opts) {
-  const res = await fetch(url, opts)
-  if (!res.ok) throw "Fetch failed"
-  return res.json()
-}
+const fetchJSON = (u,o)=>fetch(u,o).then(r=>r.json())
 
-async function resolveUserId(input) {
-  if (/^\d+$/.test(input)) return input
-  const res = await fetchJSON("https://users.roproxy.com/v1/usernames/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ usernames: [input] })
+const daysBetween = (a,b)=>Math.abs((new Date(a)-new Date(b))/(1000*60*60*24))
+
+async function resolveUserId(input){
+  if(/^\d+$/.test(input)) return input
+  const r=await fetchJSON("https://users.roproxy.com/v1/usernames/users",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({usernames:[input]})
   })
-  if (!res.data.length) throw "User not found"
-  return res.data[0].id
+  return r.data[0].id
 }
 
 /* ================= DATA ================= */
 
-async function getProfile(userInput) {
-  const userId = await resolveUserId(userInput)
-
-  const [
-    user,
-    usernames,
-    friends,
-    groups
-  ] = await Promise.all([
-    fetchJSON(`https://users.roproxy.com/v1/users/${userId}`),
-    fetchJSON(`https://users.roproxy.com/v1/users/${userId}/username-history?limit=50&sortOrder=Asc`),
-    fetchJSON(`https://friends.roproxy.com/v1/users/${userId}/friends`),
-    fetchJSON(`https://groups.roproxy.com/v2/users/${userId}/groups/roles`)
-  ])
-
-  return { userId, user, usernames: usernames.data, friends: friends.data, groups: groups.data }
+async function getUser(userId){
+  return fetchJSON(`https://users.roproxy.com/v1/users/${userId}`)
 }
 
-/* ================= USERNAME SIMILARITY ================= */
+async function getGroups(userId){
+  return fetchJSON(`https://groups.roproxy.com/v2/users/${userId}/groups/roles`)
+}
 
-async function findSimilarUsernames(username) {
-  const res = await fetchJSON(
-    `https://users.roproxy.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`
-  )
-  return res.data
+async function getFriends(userId){
+  return fetchJSON(`https://friends.roproxy.com/v1/users/${userId}/friends`)
+}
+
+/* ================= ALT SCORING ================= */
+
+function altScore(base, other){
+  let score = 0
+
+  // Username similarity
+  if(other.name.toLowerCase().includes(base.name.toLowerCase().slice(0,4)))
+    score += 25
+
+  // Account age proximity
+  const ageDiff = daysBetween(base.created, other.created)
+  if(ageDiff < 30) score += 25
+  else if(ageDiff < 90) score += 15
+
+  // Shared groups
+  const shared = base.groups.filter(g =>
+    other.groups.some(og => og.group.id === g.group.id)
+  ).length
+  score += Math.min(shared * 10, 30)
+
+  // Mutual friends
+  const mutual = base.friends.filter(f =>
+    other.friends.some(of => of.id === f.id)
+  ).length
+  score += Math.min(mutual * 5, 20)
+
+  return Math.min(score, 100)
 }
 
 /* ================= UI ================= */
 
-function toggle(id) {
+function toggle(id){
   document.getElementById(id).classList.toggle("hidden")
 }
 
-async function inspect() {
-  const input = document.getElementById("userInput").value.trim()
-  const status = document.getElementById("status")
-  const out = document.getElementById("output")
+async function inspect(){
+  const input=document.getElementById("userInput").value.trim()
+  const out=document.getElementById("output")
+  const status=document.getElementById("status")
 
-  status.textContent = "Loading..."
-  status.className = "loading"
-  out.innerHTML = ""
+  status.textContent="Analyzing..."
+  out.innerHTML=""
 
-  try {
-    const p = await getProfile(input)
-    const similar = await findSimilarUsernames(p.user.name)
+  const userId = await resolveUserId(input)
+  const user = await getUser(userId)
+  const groups = (await getGroups(userId)).data
+  const friends = (await getFriends(userId)).data
 
-    status.textContent = ""
+  // Fetch friend details
+  const friendDetails = await Promise.all(
+    friends.map(async f=>{
+      const u = await getUser(f.id)
+      const g = await getGroups(f.id)
+      return {...u, groups:g.data, id:f.id}
+    })
+  )
 
-    out.innerHTML = `
-      <div class="section">
-        <h2 onclick="toggle('basic')">▶ Basic Info</h2>
-        <div id="basic">
-          <pre>${JSON.stringify(p.user, null, 2)}</pre>
+  // Friends in target group
+  const friendsInTarget = friendDetails.filter(f =>
+    f.groups.some(g => g.group.id === TARGET_GROUP)
+  )
+
+  out.innerHTML = `
+  <div class="section">
+    <h2 onclick="toggle('groups')">▶ All Groups (${groups.length})</h2>
+    <div id="groups">
+      ${groups.map(g=>`
+        <div class="card">
+          <strong>${g.group.name}</strong><br>
+          ${g.role.name} (${g.role.rank})
         </div>
-      </div>
+      `).join("")}
+    </div>
+  </div>
 
-      <div class="section">
-        <h2 onclick="toggle('names')">▶ Past Usernames</h2>
-        <div id="names">
-          <pre>${p.usernames.map(u => u.name).join(", ")}</pre>
+  <div class="section">
+    <h2 onclick="toggle('friends4219')">▶ Friends in Group ${TARGET_GROUP} (${friendsInTarget.length})</h2>
+    <div id="friends4219" class="grid">
+      ${friendsInTarget.map(f=>`
+        <div class="card">
+          <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${f.id}&size=100x100&format=Png">
+          <div>${f.name}</div>
+          <div>${f.groups.find(g=>g.group.id===TARGET_GROUP).role.name}</div>
         </div>
-      </div>
+      `).join("")}
+    </div>
+  </div>
 
-      <div class="section">
-        <h2 onclick="toggle('groups')">▶ Groups</h2>
-        <input class="filter" placeholder="Filter groups..." oninput="
-          [...document.querySelectorAll('.group')].forEach(g=>{
-            g.style.display = g.textContent.toLowerCase().includes(this.value.toLowerCase())?'block':'none'
-          })
-        ">
-        <div id="groups">
-          ${p.groups.map(g => `
-            <div class="group card">
-              <strong>${g.group.name}</strong><br>
-              ${g.role.name} (${g.role.rank})
-            </div>
-          `).join("")}
-        </div>
-      </div>
-
-      <div class="section">
-        <h2 onclick="toggle('friends')">▶ Friends</h2>
-        <input class="filter" placeholder="Filter friends..." oninput="
-          [...document.querySelectorAll('.friend')].forEach(f=>{
-            f.style.display = f.textContent.toLowerCase().includes(this.value.toLowerCase())?'block':'none'
-          })
-        ">
-        <div id="friends" class="grid">
-          ${p.friends.map(f => `
-            <div class="friend card">
-              <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${f.id}&size=100x100&format=Png">
-              <div>${f.name}</div>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-
-      <div class="section">
-        <h2 onclick="toggle('similar')">▶ Similar Usernames</h2>
-        <div id="similar" class="grid">
-          ${similar.map(u => `
-            <div class="card">
-              <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${u.id}&size=100x100&format=Png">
-              <div>${u.name}</div>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-    `
-  } catch (e) {
-    status.textContent = "Failed to load user"
-    console.error(e)
-  }
+  <div class="section">
+    <h2 onclick="toggle('alt')">▶ Alt Likelihood Scoring</h2>
+    <div id="alt" class="grid">
+      ${friendDetails.map(f=>{
+        const score=altScore(
+          {name:user.name,created:user.created,groups, friends},
+          {...f,friends}
+        )
+        return `
+        <div class="card">
+          <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${f.id}&size=100x100&format=Png">
+          <div>${f.name}</div>
+          <div class="score ${score>70?'high':score>40?'mid':'low'}">
+            ${score}% likelihood
+          </div>
+        </div>`
+      }).join("")}
+    </div>
+  </div>
+  `
 }
 </script>
 </body>
