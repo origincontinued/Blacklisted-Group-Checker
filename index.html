@@ -1,197 +1,226 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Advanced Roblox Group Checker</title>
+<meta charset="UTF-8">
+<title>Roblox OSINT Dashboard</title>
 
-  <style>
-    * {
-      box-sizing: border-box;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-
-    body {
-      background: radial-gradient(circle at top, #1b1b1b, #0b0b0b);
-      color: #fff;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    .card {
-      background: #121212;
-      padding: 30px;
-      border-radius: 16px;
-      width: 420px;
-      box-shadow: 0 25px 60px rgba(0,0,0,.6);
-    }
-
-    h1 {
-      text-align: center;
-      font-size: 22px;
-      margin-bottom: 20px;
-    }
-
-    input, button {
-      width: 100%;
-      padding: 12px;
-      margin-top: 10px;
-      border-radius: 10px;
-      border: none;
-      font-size: 15px;
-    }
-
-    input {
-      background: #1e1e1e;
-      color: #fff;
-    }
-
-    button {
-      background: linear-gradient(135deg, #5865f2, #4752c4);
-      color: white;
-      cursor: pointer;
-      font-weight: 600;
-    }
-
-    button:hover {
-      filter: brightness(1.1);
-    }
-
-    .result {
-      margin-top: 15px;
-      min-height: 22px;
-      text-align: center;
-      font-size: 15px;
-    }
-
-    .success { color: #4ade80; }
-    .error { color: #f87171; }
-    .loading { color: #facc15; }
-    .small { font-size: 13px; opacity: 0.8; margin-top: 5px; }
-  </style>
+<style>
+* { box-sizing: border-box; font-family: system-ui, sans-serif; }
+body {
+  background: #0b0b0b;
+  color: #fff;
+  padding: 30px;
+  display: flex;
+  justify-content: center;
+}
+.container {
+  width: 900px;
+  background: #121212;
+  border-radius: 16px;
+  padding: 25px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.6);
+}
+input, button {
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+}
+input { background: #1e1e1e; color: white; width: 100%; }
+button {
+  background: #5865f2;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+.section {
+  margin-top: 20px;
+}
+.section h2 {
+  cursor: pointer;
+  font-size: 18px;
+}
+.hidden { display: none; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+.card {
+  background: #1a1a1a;
+  padding: 10px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 13px;
+}
+.card img {
+  width: 80px;
+  height: 80px;
+  border-radius: 10px;
+}
+.filter {
+  margin: 10px 0;
+}
+pre {
+  background: #1a1a1a;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  overflow-x: auto;
+}
+a { color: #8ab4ff; text-decoration: none; }
+.loading { color: #facc15; }
+</style>
 </head>
 
 <body>
+<div class="container">
 
-  <div class="card">
-    <h1>Roblox Group Checker</h1>
+<h1>Roblox OSINT Dashboard</h1>
 
-    <input id="userInput" placeholder="Username or User ID">
-    <input id="groupIds" placeholder="Group IDs (comma separated)">
-    <input id="minRank" placeholder="Minimum Rank ID (optional)">
+<input id="userInput" placeholder="Username or User ID">
+<button onclick="inspect()">Inspect</button>
 
-    <button onclick="handleCheck()">Check</button>
+<div id="status"></div>
+<div id="output"></div>
 
-    <div id="result" class="result"></div>
-    <div id="meta" class="result small"></div>
-  </div>
+</div>
 
-  <script>
-    // ================================
-    // REUSABLE CORE MODULE
-    // ================================
+<script>
+/* ================= HELPERS ================= */
 
-    async function resolveUserId(input) {
-      if (/^\d+$/.test(input)) return input
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts)
+  if (!res.ok) throw "Fetch failed"
+  return res.json()
+}
 
-      const cacheKey = `rbx_uid_${input.toLowerCase()}`
-      const cached = localStorage.getItem(cacheKey)
-      if (cached) return cached
+async function resolveUserId(input) {
+  if (/^\d+$/.test(input)) return input
+  const res = await fetchJSON("https://users.roproxy.com/v1/usernames/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usernames: [input] })
+  })
+  if (!res.data.length) throw "User not found"
+  return res.data[0].id
+}
 
-      const res = await fetch("https://users.roproxy.com/v1/usernames/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          usernames: [input],
-          excludeBannedUsers: false
-        })
-      })
+/* ================= DATA ================= */
 
-      const data = await res.json()
-      if (!data.data.length) throw new Error("User not found")
+async function getProfile(userInput) {
+  const userId = await resolveUserId(userInput)
 
-      localStorage.setItem(cacheKey, data.data[0].id)
-      return data.data[0].id
-    }
+  const [
+    user,
+    usernames,
+    friends,
+    groups
+  ] = await Promise.all([
+    fetchJSON(`https://users.roproxy.com/v1/users/${userId}`),
+    fetchJSON(`https://users.roproxy.com/v1/users/${userId}/username-history?limit=50&sortOrder=Asc`),
+    fetchJSON(`https://friends.roproxy.com/v1/users/${userId}/friends`),
+    fetchJSON(`https://groups.roproxy.com/v2/users/${userId}/groups/roles`)
+  ])
 
-    async function checkRobloxGroups({ userInput, groupIds, minRank = 0 }) {
-      const userId = await resolveUserId(userInput)
+  return { userId, user, usernames: usernames.data, friends: friends.data, groups: groups.data }
+}
 
-      const res = await fetch(
-        `https://groups.roproxy.com/v2/users/${userId}/groups/roles`
-      )
+/* ================= USERNAME SIMILARITY ================= */
 
-      const data = await res.json()
+async function findSimilarUsernames(username) {
+  const res = await fetchJSON(
+    `https://users.roproxy.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`
+  )
+  return res.data
+}
 
-      const results = groupIds.map(id => {
-        const g = data.data.find(grp => grp.group.id == id)
-        if (!g) return { groupId: id, inGroup: false }
+/* ================= UI ================= */
 
-        return {
-          groupId: id,
-          inGroup: g.role.rank >= minRank,
-          role: g.role.name,
-          rank: g.role.rank
-        }
-      })
+function toggle(id) {
+  document.getElementById(id).classList.toggle("hidden")
+}
 
-      return { userId, results }
-    }
+async function inspect() {
+  const input = document.getElementById("userInput").value.trim()
+  const status = document.getElementById("status")
+  const out = document.getElementById("output")
 
-    // ================================
-    // UI HANDLER
-    // ================================
+  status.textContent = "Loading..."
+  status.className = "loading"
+  out.innerHTML = ""
 
-    async function handleCheck() {
-      const userInput = document.getElementById("userInput").value.trim()
-      const groupIds = document.getElementById("groupIds").value
-        .split(",")
-        .map(g => g.trim())
-        .filter(Boolean)
+  try {
+    const p = await getProfile(input)
+    const similar = await findSimilarUsernames(p.user.name)
 
-      const minRank = Number(document.getElementById("minRank").value || 0)
+    status.textContent = ""
 
-      const result = document.getElementById("result")
-      const meta = document.getElementById("meta")
+    out.innerHTML = `
+      <div class="section">
+        <h2 onclick="toggle('basic')">▶ Basic Info</h2>
+        <div id="basic">
+          <pre>${JSON.stringify(p.user, null, 2)}</pre>
+        </div>
+      </div>
 
-      if (!userInput || !groupIds.length) {
-        result.textContent = "Please fill in required fields"
-        result.className = "result error"
-        meta.textContent = ""
-        return
-      }
+      <div class="section">
+        <h2 onclick="toggle('names')">▶ Past Usernames</h2>
+        <div id="names">
+          <pre>${p.usernames.map(u => u.name).join(", ")}</pre>
+        </div>
+      </div>
 
-      result.textContent = "Checking..."
-      result.className = "result loading"
-      meta.textContent = ""
+      <div class="section">
+        <h2 onclick="toggle('groups')">▶ Groups</h2>
+        <input class="filter" placeholder="Filter groups..." oninput="
+          [...document.querySelectorAll('.group')].forEach(g=>{
+            g.style.display = g.textContent.toLowerCase().includes(this.value.toLowerCase())?'block':'none'
+          })
+        ">
+        <div id="groups">
+          ${p.groups.map(g => `
+            <div class="group card">
+              <strong>${g.group.name}</strong><br>
+              ${g.role.name} (${g.role.rank})
+            </div>
+          `).join("")}
+        </div>
+      </div>
 
-      try {
-        const res = await checkRobloxGroups({ userInput, groupIds, minRank })
+      <div class="section">
+        <h2 onclick="toggle('friends')">▶ Friends</h2>
+        <input class="filter" placeholder="Filter friends..." oninput="
+          [...document.querySelectorAll('.friend')].forEach(f=>{
+            f.style.display = f.textContent.toLowerCase().includes(this.value.toLowerCase())?'block':'none'
+          })
+        ">
+        <div id="friends" class="grid">
+          ${p.friends.map(f => `
+            <div class="friend card">
+              <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${f.id}&size=100x100&format=Png">
+              <div>${f.name}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
 
-        const passed = res.results.filter(r => r.inGroup)
-        const failed = res.results.filter(r => !r.inGroup)
-
-        if (passed.length) {
-          result.textContent = `✅ Passed ${passed.length}/${groupIds.length} groups`
-          result.className = "result success"
-        } else {
-          result.textContent = "❌ No groups matched"
-          result.className = "result error"
-        }
-
-        meta.textContent = passed
-          .map(p => `Group ${p.groupId}: ${p.role} (Rank ${p.rank})`)
-          .join(" • ")
-
-      } catch (err) {
-        result.textContent = "⚠️ Failed to check user"
-        result.className = "result error"
-        meta.textContent = ""
-        console.error(err)
-      }
-    }
-  </script>
-
+      <div class="section">
+        <h2 onclick="toggle('similar')">▶ Similar Usernames</h2>
+        <div id="similar" class="grid">
+          ${similar.map(u => `
+            <div class="card">
+              <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${u.id}&size=100x100&format=Png">
+              <div>${u.name}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `
+  } catch (e) {
+    status.textContent = "Failed to load user"
+    console.error(e)
+  }
+}
+</script>
 </body>
 </html>
