@@ -2,95 +2,49 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Roblox Alt Analysis Dashboard</title>
+<title>Roblox OSINT Alt Dashboard</title>
 
 <style>
 * { box-sizing: border-box; font-family: system-ui, sans-serif; }
-body {
-  background: #0b0b0b;
-  color: #fff;
-  padding: 30px;
-  display: flex;
-  justify-content: center;
-}
-.container {
-  width: 1000px;
-  background: #121212;
-  border-radius: 16px;
-  padding: 25px;
-  box-shadow: 0 30px 80px rgba(0,0,0,.6);
-}
-input, button {
-  padding: 10px;
-  border-radius: 8px;
-  border: none;
-  width: 100%;
-}
-input { background: #1e1e1e; color: white; }
-button {
-  background: #5865f2;
-  color: white;
-  font-weight: 600;
-  cursor: pointer;
-}
-.section { margin-top: 20px; }
-.section h2 {
-  cursor: pointer;
-  font-size: 18px;
-}
-.hidden { display: none; }
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
-}
-.card {
-  background: #1a1a1a;
-  padding: 10px;
-  border-radius: 10px;
-  text-align: center;
-  font-size: 13px;
-}
-.card img {
-  width: 80px;
-  height: 80px;
-  border-radius: 10px;
-}
-.filter {
-  margin: 10px 0;
-}
-.score {
-  font-weight: bold;
-}
-.low { color: #4ade80 }
-.mid { color: #facc15 }
-.high { color: #f87171 }
+body { background:#0b0b0b; color:#fff; padding:30px; }
+.container { max-width:1200px; margin:auto; background:#121212; padding:25px; border-radius:16px; }
+input,button { padding:10px; border-radius:8px; border:none; }
+input { background:#1e1e1e; color:white; width:100%; }
+button { background:#5865f2; color:white; font-weight:600; cursor:pointer; }
+.section { margin-top:20px; }
+.section h2 { cursor:pointer; }
+.hidden { display:none; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+.card { background:#1a1a1a; padding:10px; border-radius:10px; text-align:center; font-size:13px; }
+.card img { width:80px; height:80px; border-radius:10px; }
+.low{color:#4ade80} .mid{color:#facc15} .high{color:#f87171}
+pre{background:#1a1a1a;padding:12px;border-radius:10px;overflow:auto;font-size:12px}
 </style>
 </head>
 
 <body>
 <div class="container">
 
-<h1>Roblox Alt Analysis Dashboard</h1>
+<h1>Roblox OSINT / Alt-Analysis Dashboard</h1>
 
-<input id="userInput" placeholder="Username or User ID">
-<button onclick="inspect()">Analyze</button>
+<input id="userA" placeholder="Primary user (username or ID)">
+<input id="userB" placeholder="Optional comparison user">
+<button onclick="analyze()">Analyze</button>
+<button onclick="exportJSON()">Export JSON</button>
 
 <div id="status"></div>
-<div id="output"></div>
+<div id="out"></div>
 
 </div>
 
 <script>
 const TARGET_GROUP = 4219097
+let CASE_DATA = {}
 
-/* ================= HELPERS ================= */
+const fetchJSON=(u,o)=>fetch(u,o).then(r=>r.json())
+const days=d=>Math.floor((Date.now()-new Date(d))/86400000)
 
-const fetchJSON = (u,o)=>fetch(u,o).then(r=>r.json())
-
-const daysBetween = (a,b)=>Math.abs((new Date(a)-new Date(b))/(1000*60*60*24))
-
-async function resolveUserId(input){
+async function resolve(input){
   if(/^\d+$/.test(input)) return input
   const r=await fetchJSON("https://users.roproxy.com/v1/usernames/users",{
     method:"POST",headers:{"Content-Type":"application/json"},
@@ -99,103 +53,64 @@ async function resolveUserId(input){
   return r.data[0].id
 }
 
-/* ================= DATA ================= */
+const getUser=id=>fetchJSON(`https://users.roproxy.com/v1/users/${id}`)
+const getGroups=id=>fetchJSON(`https://groups.roproxy.com/v2/users/${id}/groups/roles`)
+const getFriends=id=>fetchJSON(`https://friends.roproxy.com/v1/users/${id}/friends`)
+const head=id=>`https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${id}&size=100x100&format=Png`
 
-async function getUser(userId){
-  return fetchJSON(`https://users.roproxy.com/v1/users/${userId}`)
+function score(base,other){
+  let s=0, reasons=[]
+  if(other.name.toLowerCase().includes(base.name.slice(0,4).toLowerCase())){s+=25;reasons.push("Name similarity")}
+  const ageDiff=Math.abs(days(base.created)-days(other.created))
+  if(ageDiff<30){s+=25;reasons.push("Creation proximity")}
+  const sharedGroups=base.groups.filter(g=>other.groups.some(og=>og.group.id===g.group.id)).length
+  if(sharedGroups){s+=Math.min(sharedGroups*10,30);reasons.push("Shared groups")}
+  const mutual=base.friends.filter(f=>other.friends.some(of=>of.id===f.id)).length
+  if(mutual){s+=Math.min(mutual*5,20);reasons.push("Mutual friends")}
+  if(other.groups.some(g=>g.group.id===TARGET_GROUP)) {s+=10;reasons.push("Target group")}
+  return {score:Math.min(s,100),reasons}
 }
 
-async function getGroups(userId){
-  return fetchJSON(`https://groups.roproxy.com/v2/users/${userId}/groups/roles`)
-}
+function toggle(id){document.getElementById(id).classList.toggle("hidden")}
 
-async function getFriends(userId){
-  return fetchJSON(`https://friends.roproxy.com/v1/users/${userId}/friends`)
-}
+async function analyze(){
+  const A=document.getElementById("userA").value.trim()
+  const B=document.getElementById("userB").value.trim()
+  const out=document.getElementById("out")
+  out.innerHTML="Analyzing…"
 
-/* ================= ALT SCORING ================= */
+  const aId=await resolve(A)
+  const aUser=await getUser(aId)
+  const aGroups=(await getGroups(aId)).data
+  const aFriends=(await getFriends(aId)).data
 
-function altScore(base, other){
-  let score = 0
+  const friendDetails=await Promise.all(aFriends.map(async f=>{
+    const u=await getUser(f.id)
+    const g=(await getGroups(f.id)).data
+    return {...u,groups:g,friends:[]}
+  }))
 
-  // Username similarity
-  if(other.name.toLowerCase().includes(base.name.toLowerCase().slice(0,4)))
-    score += 25
+  const friendsInTarget=friendDetails.filter(f=>f.groups.some(g=>g.group.id===TARGET_GROUP))
 
-  // Account age proximity
-  const ageDiff = daysBetween(base.created, other.created)
-  if(ageDiff < 30) score += 25
-  else if(ageDiff < 90) score += 15
+  CASE_DATA={aUser,aGroups,aFriends,friendDetails,friendsInTarget}
 
-  // Shared groups
-  const shared = base.groups.filter(g =>
-    other.groups.some(og => og.group.id === g.group.id)
-  ).length
-  score += Math.min(shared * 10, 30)
-
-  // Mutual friends
-  const mutual = base.friends.filter(f =>
-    other.friends.some(of => of.id === f.id)
-  ).length
-  score += Math.min(mutual * 5, 20)
-
-  return Math.min(score, 100)
-}
-
-/* ================= UI ================= */
-
-function toggle(id){
-  document.getElementById(id).classList.toggle("hidden")
-}
-
-async function inspect(){
-  const input=document.getElementById("userInput").value.trim()
-  const out=document.getElementById("output")
-  const status=document.getElementById("status")
-
-  status.textContent="Analyzing..."
-  out.innerHTML=""
-
-  const userId = await resolveUserId(input)
-  const user = await getUser(userId)
-  const groups = (await getGroups(userId)).data
-  const friends = (await getFriends(userId)).data
-
-  // Fetch friend details
-  const friendDetails = await Promise.all(
-    friends.map(async f=>{
-      const u = await getUser(f.id)
-      const g = await getGroups(f.id)
-      return {...u, groups:g.data, id:f.id}
-    })
-  )
-
-  // Friends in target group
-  const friendsInTarget = friendDetails.filter(f =>
-    f.groups.some(g => g.group.id === TARGET_GROUP)
-  )
-
-  out.innerHTML = `
+  out.innerHTML=`
   <div class="section">
-    <h2 onclick="toggle('groups')">▶ All Groups (${groups.length})</h2>
+    <h2 onclick="toggle('groups')">▶ All Groups (${aGroups.length})</h2>
     <div id="groups">
-      ${groups.map(g=>`
-        <div class="card">
-          <strong>${g.group.name}</strong><br>
-          ${g.role.name} (${g.role.rank})
-        </div>
+      ${aGroups.map(g=>`
+        <div class="card">${g.group.name}<br>${g.role.name} (${g.role.rank})</div>
       `).join("")}
     </div>
   </div>
 
   <div class="section">
-    <h2 onclick="toggle('friends4219')">▶ Friends in Group ${TARGET_GROUP} (${friendsInTarget.length})</h2>
-    <div id="friends4219" class="grid">
+    <h2 onclick="toggle('g4219')">▶ Friends in Group ${TARGET_GROUP}</h2>
+    <div id="g4219" class="grid">
       ${friendsInTarget.map(f=>`
         <div class="card">
-          <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${f.id}&size=100x100&format=Png">
-          <div>${f.name}</div>
-          <div>${f.groups.find(g=>g.group.id===TARGET_GROUP).role.name}</div>
+          <img src="${head(f.id)}">
+          ${f.name}
         </div>
       `).join("")}
     </div>
@@ -205,22 +120,38 @@ async function inspect(){
     <h2 onclick="toggle('alt')">▶ Alt Likelihood Scoring</h2>
     <div id="alt" class="grid">
       ${friendDetails.map(f=>{
-        const score=altScore(
-          {name:user.name,created:user.created,groups, friends},
-          {...f,friends}
+        const r=score(
+          {name:aUser.name,created:aUser.created,groups:aGroups,friends:aFriends},
+          {...f,friends:aFriends}
         )
-        return `
+        return`
         <div class="card">
-          <img src="https://thumbnails.roproxy.com/v1/users/avatar-headshot?userIds=${f.id}&size=100x100&format=Png">
-          <div>${f.name}</div>
-          <div class="score ${score>70?'high':score>40?'mid':'low'}">
-            ${score}% likelihood
-          </div>
+          <img src="${head(f.id)}">
+          ${f.name}<br>
+          <span class="${r.score>70?'high':r.score>40?'mid':'low'}">${r.score}%</span>
         </div>`
       }).join("")}
     </div>
   </div>
+
+  <div class="section">
+    <h2 onclick="toggle('timeline')">▶ Account Age Timeline</h2>
+    <pre id="timeline">${
+      [aUser,...friendDetails]
+        .sort((a,b)=>new Date(a.created)-new Date(b.created))
+        .map(u=>`${u.name} – ${days(u.created)} days`)
+        .join("\n")
+    }</pre>
+  </div>
   `
+}
+
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(CASE_DATA,null,2)],{type:"application/json"})
+  const a=document.createElement("a")
+  a.href=URL.createObjectURL(blob)
+  a.download="roblox_osint_case.json"
+  a.click()
 }
 </script>
 </body>
